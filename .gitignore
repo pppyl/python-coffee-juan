@@ -8,7 +8,6 @@ tools/.classes/
 protocol/client.private.json
 android/build/
 android/.signing/
-dist/
 submission/
 *.jks
 *.keystore
