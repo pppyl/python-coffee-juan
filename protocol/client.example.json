@@ -1,0 +1,9 @@
+{
+  "transport_key": "",
+  "transport_iv": "",
+  "login_key": "",
+  "login_iv": "",
+  "signing_private_key_b64": "",
+  "channel_prefix": "",
+  "signature_delimiter": ""
+}

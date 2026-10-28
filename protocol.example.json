@@ -1,0 +1,14 @@
+{
+  "verified": false,
+  "notes": "只有核实完整请求、设备校验和响应字段后才能启用。当前 APK 中的接口路径不等于可直接调用的协议。此文件没有猜填参数，不可用于登录。",
+  "headers": {},
+  "endpoints": {
+    "sms": {"url": "", "method": "POST", "success": [], "json": {}},
+    "verify": {"url": "", "method": "POST", "success": [], "json": {}},
+    "account": {"url": "", "method": "POST", "success": []},
+    "coupons": {"url": "", "method": "POST", "success": []}
+  },
+  "coupon_items_pointer": "",
+  "coupon_fields": {},
+  "user_name_pointer": ""
+}

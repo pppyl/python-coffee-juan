@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#006241">
+  <title>好礼随行 · 星巴克账号工具</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <script defer src="{{ url_for('static', filename='app.js') }}"></script>
+</head>
+<body>
+  <div class="page-shell">
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="好礼随行首页"><span class="brand-mark" aria-hidden="true">✳</span><span>好礼随行<small>COFFEE & LITTLE REWARDS</small></span></a>
+      <span class="connection-pill" id="connection-pill"><span class="status-dot"></span><span id="connection-text">正在连接</span></span>
+    </header>
+
+    <main>
+      <div class="workspace">
+        <aside class="account-panel" aria-labelledby="account-title">
+          <div class="panel-heading"><span class="section-index">01 / ACCOUNT</span><span class="small-star" aria-hidden="true">✳</span></div>
+          <h2 id="account-title">我的账号 <span class="coupon-count" id="account-count">0</span></h2>
+          <p class="panel-description" id="account-description">每个账号分别验证，登录状态互相独立。</p>
+          <div id="account-list" class="account-list" aria-live="polite"></div>
+          <h3 class="add-account-title">添加 / 重新登录账号</h3>
+          <form id="login-form" novalidate>
+            <label for="phone">手机号码</label>
+            <div class="phone-field"><span>+86</span><input id="phone" name="phone" type="tel" inputmode="numeric" autocomplete="tel-national" maxlength="11" placeholder="请输入 11 位手机号" required aria-describedby="login-message"></div>
+            <label for="code">短信验证码</label>
+            <div class="code-field"><input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="输入验证码" required><button id="send-sms" class="text-button" type="button">获取验证码</button></div>
+            <button id="login-button" class="primary-button" type="submit"><span>添加账号</span><span aria-hidden="true">↗</span></button>
+            <p class="form-note">验证码由官方登录流程发送，请使用本人账号。</p>
+          </form>
+          <button id="logout-button" class="secondary-button logout-all" type="button" hidden>退出全部账号</button>
+          <div id="login-message" class="message" role="status" aria-live="polite" hidden></div>
+          <div class="provider-note"><span class="status-dot"></span><p id="provider-message">正在检查登录服务…</p></div>
+        </aside>
+
+        <section class="coupons-panel" aria-labelledby="coupons-title">
+          <div class="coupon-heading"><div><span class="section-index">02 / MY REWARDS</span><h2 id="coupons-title">全部好礼券 <span class="coupon-count" id="coupon-count" hidden>0</span></h2></div><button id="refresh-coupons" class="refresh-button" type="button" disabled><span id="refresh-icon" aria-hidden="true">↻</span><span id="refresh-label">一键获取全部账号</span></button></div>
+          <p class="coupons-description">按账号分别展示；某个账号失效，不影响其他账号。</p>
+          <div class="export-toolbar" id="export-toolbar" aria-label="分类复制和下载">
+            <div class="export-row"><span>复制券码</span><div id="copy-categories" class="category-buttons"></div></div>
+            <div class="export-row"><span>下载图片</span><div id="download-categories" class="category-buttons"></div></div>
+            <p>汇总当前已获取账号的券。复制含券名与二维码原文，图片带券名。</p>
+          </div>
+          <div id="coupon-message" class="message" role="status" aria-live="polite" hidden></div>
+          <div id="coupon-empty" class="empty-state"><span class="empty-ticket" aria-hidden="true">✦</span><h3 id="empty-title">你的好礼，即将出现</h3><p id="empty-description">分别添加账号后，点击“一键获取全部账号”查看好礼券与二维码。</p><span class="empty-caption">A LITTLE REWARD FOR YOUR DAY</span></div>
+          <div id="coupon-loading" class="coupon-loading" aria-label="正在获取好礼券" hidden><div class="skeleton-card"></div><div class="skeleton-card"></div></div>
+          <div id="coupon-groups" class="coupon-groups" aria-live="polite"></div>
+          <p class="coupon-footnote" id="coupon-footnote" hidden>请以券面使用规则与有效期为准，二维码请妥善保管。</p>
+        </section>
+      </div>
+    </main>
+    <footer><span>好礼随行</span><p>一份小小的好礼，一段属于自己的咖啡时光。</p><span aria-hidden="true">✳</span></footer>
+  </div>
+</body>
+</html>
