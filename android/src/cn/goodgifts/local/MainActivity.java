@@ -24,6 +24,7 @@ import java.util.concurrent.Executors;
 public final class MainActivity extends Activity {
     WebView web;
     NativeBackend backend;
+    ShumeiWebTokenProvider riskTokens;
     String startupError;
     final ExecutorService worker = Executors.newSingleThreadExecutor();
     static final String LOCAL_HOST = "appassets.androidplatform.net";
@@ -34,6 +35,7 @@ public final class MainActivity extends Activity {
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
         FrameLayout root = new FrameLayout(this); root.setFitsSystemWindows(true); root.setBackgroundColor(Color.rgb(248,247,242));
         web = new WebView(this); root.addView(web, new FrameLayout.LayoutParams(-1,-1)); setContentView(root);
+        riskTokens = new ShumeiWebTokenProvider(this, root);
         WebSettings settings = web.getSettings(); settings.setJavaScriptEnabled(true); settings.setDomStorageEnabled(false);
         settings.setAllowFileAccess(false); settings.setAllowContentAccess(false); settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setCacheMode(WebSettings.LOAD_NO_CACHE); settings.setSupportMultipleWindows(false);
@@ -56,7 +58,7 @@ public final class MainActivity extends Activity {
         });
         web.addJavascriptInterface(new Bridge(), "NativeApp");
         worker.execute(() -> {
-            try { backend = new NativeBackend(getApplicationContext()); }
+            try { backend = new NativeBackend(getApplicationContext(), riskTokens); }
             catch (Exception error) { startupError = "无法读取本机协议或加密账号存储，请检查安装包。"; }
             runOnUiThread(() -> { if (!isFinishing()) web.loadUrl("https://" + LOCAL_HOST + "/index.html"); });
         });
@@ -95,6 +97,7 @@ public final class MainActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        if (riskTokens != null) { riskTokens.close(); riskTokens = null; }
         if (web != null) { web.removeJavascriptInterface("NativeApp"); web.destroy(); web = null; }
         worker.shutdown(); super.onDestroy();
     }

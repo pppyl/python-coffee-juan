@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import math
 import os
 import re
 import secrets
@@ -16,6 +17,9 @@ import qrcode
 from flask import Flask, jsonify, render_template, request, send_file, session
 from errors import ProviderError
 from coupon_export import copy_text, image_download, matches_category
+
+
+SMS_COOLDOWN_SECONDS = 60
 
 
 @dataclass
@@ -33,6 +37,7 @@ class BrowserState:
     csrf: str = field(default_factory=lambda: secrets.token_urlsafe(32))
     last_seen: float = field(default_factory=time.monotonic)
     sms_at: float = 0
+    sms_cooldowns: dict[str, float] = field(default_factory=dict)
     sent_phone: str | None = None
     login_attempts: list = field(default_factory=list)
     provider: object = None
@@ -216,19 +221,22 @@ def create_app(provider_factory=None):
         with state.lock:
             if any(a.phone == phone and a.provider.authenticated() for a in state.accounts.values()):
                 raise ProviderError("该账号已登录，可直接获取好礼券。", 409, "account_already_added")
-            wait = int(60 - (time.monotonic() - state.sms_at))
+            now = time.monotonic()
+            state.sms_cooldowns = {number: end for number, end in state.sms_cooldowns.items() if end > now}
+            wait = math.ceil(state.sms_cooldowns.get(phone, now) - now)
             if wait > 0:
                 raise ProviderError(f"请在 {wait} 秒后重试。", 429, "sms_cooldown", retry_after=wait)
             outcome = state.provider.send_sms(phone) or {}
             state.sms_at, state.sent_phone = time.monotonic(), phone
-            return result(message="已请求发送验证码，请查看短信。", retry_after=60, **outcome)
+            state.sms_cooldowns[phone] = state.sms_at + SMS_COOLDOWN_SECONDS
+            return result(message="已请求发送验证码，请查看短信。", retry_after=SMS_COOLDOWN_SECONDS, **outcome)
 
     @app.post("/api/auth/login")
     def login():
         state, data = current(), body()
         phone, code = phone_number(data.get("phone")), str(data.get("code") or "").strip()
-        if not re.fullmatch(r"\d{4,8}", code):
-            raise ProviderError("请输入 4 至 8 位短信验证码。", 400, "invalid_code")
+        if not re.fullmatch(r"[0-9]{4,8}", code):
+            raise ProviderError("请输入 4 至 8 位数字验证码。", 400, "invalid_code")
         with state.lock:
             now = time.monotonic()
             state.login_attempts[:] = [x for x in state.login_attempts if now - x < 600]

@@ -1,0 +1,9 @@
+{
+  "package_name": "com.starbucks.cn",
+  "version_name": "10.32.0",
+  "version_code": 8838,
+  "apk_sha256": "8eb9dc6c75962091ffad14befa493a1a03bb5bd3a345d1866d2245bdd3b09df3",
+  "signer_certificate_sha256": "95023fa79f768a2b470ac5bf30877c0f6c4c0f757a5ed90f5af0d2c28674c697",
+  "observed_on": "2026-11-15",
+  "evidence": "User-supplied APK matched the APK installed on the selected device. REA observed versionName 10.32.0 and versionCode 8838 after a replace install."
+}

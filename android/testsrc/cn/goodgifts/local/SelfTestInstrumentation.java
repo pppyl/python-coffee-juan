@@ -50,13 +50,21 @@ public final class SelfTestInstrumentation extends Instrumentation {
         String login = Base64.getEncoder().encodeToString(p.encrypt(plain, "login", true).getBytes(StandardCharsets.UTF_8));
         check(login.equals("YldmemFSbnJJTGZUbnZUZFB6UHdSaFhaTVczTjlXSnBsOGJvLzh5QktVd2VKaDdLR3hjUENjU0ZlVjRmVnF6ego="), "Android login Base64 exact LF");
         String signature = p.signature(StarbucksClient.SMS, plain, nonce).split(",sign=", 2)[1];
-        check(StarbucksClient.hash(signature).equals("4f22a4d3c6555953e5c991c39de9e5b4d3d214bd4ca953aa0c19204cbb359afc"), "RSA independent oracle");
+        check(StarbucksClient.hash(signature).equals("c867ba5717ed470bc297e5cfb99c650a56f0816b54d7b22f72a7602a844928de"), "RSA independent oracle");
+        String riskFixture = new String(new char[88]).replace('\0', 'A');
+        check(ShumeiWebTokenProvider.validToken("B" + riskFixture) && !ShumeiWebTokenProvider.validToken("D" + riskFixture), "risk token envelope validation");
         check(Protocol.json(Protocol.object("x", JSONObject.NULL, "y", new JSONArray().put(JSONObject.NULL).put("<&='\u2028")))
             .equals("{\"y\":[null,\"\\u003c\\u0026\\u003d\\u0027\\u2028\"]}"), "Gson null and HTML escaping");
         Protocol.Frame loginFrame = p.frame(StarbucksClient.LOGIN, new JSONObject(plain), true);
         check(!loginFrame.encrypted && loginFrame.body.contains("%0A"), "legacy form bypass");
         FlowClient flow = new FlowClient(p); flow.sendSms("13900000000"); flow.login("13900000000", "1234");
         check(flow.authenticated() && flow.calls.equals(Arrays.asList(StarbucksClient.SMS, StarbucksClient.LOGIN, StarbucksClient.TOKEN, StarbucksClient.ACCOUNT)), "four step real contract with fake transport");
+        FlowClient sixDigitFlow = new FlowClient(p);
+        sixDigitFlow.sendSms("13900000000");
+        sixDigitFlow.login("13900000000", "012345");
+        check(sixDigitFlow.authenticated() && "012345".equals(sixDigitFlow.submittedPin), "six-digit SMS code preserves leading zero");
+        check(StarbucksClient.gatewayError(StarbucksClient.SMS, 469).getMessage().equals("发送短信验证码失败（HTTP 469）。"), "gateway error identifies SMS dispatch");
+        check(StarbucksClient.gatewayError(StarbucksClient.LOGIN, 469).getMessage().equals("提交短信验证码失败（HTTP 469）。"), "gateway error identifies OTP submission");
         check(CouponImages.matches(Protocol.object("title", "8元电子代金券"), "8") && !CouponImages.matches(Protocol.object("title", "80元券"), "8"), "exact denomination");
         check(!CouponImages.matches(Protocol.object("title", "8.5元券"), "8") && CouponImages.matches(Protocol.object("title", "无面额券"), "all"), "decimal and all categories");
         AccountVault vault = new AccountVault(context); JSONArray original = vault.load();
@@ -67,6 +75,15 @@ public final class SelfTestInstrumentation extends Instrumentation {
             check(!new String(encrypted, StandardCharsets.ISO_8859_1).contains("TEST-ONLY-PRIVATE") && vault.load().getJSONObject(0).getString("token").equals("TEST-ONLY-PRIVATE"), "Android Keystore authenticated encryption");
             vault.save(new JSONArray());
             NativeBackend backend = new NativeBackend(context);
+            FlowClient smsFlow = new FlowClient(p);
+            backend.pending = smsFlow;
+            JSONObject firstPhone = Protocol.object("phone", "13900000000");
+            JSONObject secondPhone = Protocol.object("phone", "13800000000");
+            check(backend.handle("/api/auth/sms", firstPhone).getBoolean("ok"), "first SMS starts a local cooldown");
+            check(backend.handle("/api/auth/sms", secondPhone).getBoolean("ok"), "different phone can request SMS immediately");
+            JSONObject limitedSms = backend.handle("/api/auth/sms", firstPhone);
+            check(!limitedSms.getBoolean("ok") && "sms_cooldown".equals(limitedSms.getString("error"))
+                && limitedSms.getInt("retry_after") > 0 && smsFlow.calls.size() == 2, "switching back keeps the first phone's cooldown");
             FakeClient one = new FakeClient(p, false), two = new FakeClient(p, false);
             backend.accounts.put("test-one", new NativeBackend.Account("test-one", "13900000000", one));
             backend.accounts.put("test-two", new NativeBackend.Account("test-two", "13800000000", two));
@@ -106,11 +123,20 @@ public final class SelfTestInstrumentation extends Instrumentation {
 
     static final class FlowClient extends StarbucksClient {
         final List<String> calls = new ArrayList<>();
+        String submittedPin;
         FlowClient(Protocol p) { super(p, "0123456789abcdef0123456789abcdef"); }
         @Override JSONObject request(String path, JSONObject body, boolean form, Map<String,String> extra) throws Exception {
             calls.add(path);
-            if (path.equals(SMS)) return Protocol.object("code", 200, "data", new JSONObject());
-            if (path.equals(LOGIN)) { if (!form || !extra.get("loginType").equals("PIN_CODE")) throw new Exception("login contract"); return Protocol.object("code", 200, "data", Protocol.object("token", "TEST-ONLY-CODE")); }
+            if (path.equals(SMS)) {
+                cookies.getCookieStore().add(java.net.URI.create(HOST), new java.net.HttpCookie("test_session", "fixture"));
+                return Protocol.object("code", 200, "data", new JSONObject());
+            }
+            if (path.equals(LOGIN)) {
+                if (!form || !"PIN_CODE".equals(extra.get("loginType"))) throw new Exception("login contract");
+                if (cookies.getCookieStore().getCookies().isEmpty()) throw new Exception("SMS session cookie lost before submitting code");
+                submittedPin = body.getString("pin");
+                return Protocol.object("code", 200, "data", Protocol.object("token", "TEST-ONLY-CODE"));
+            }
             if (path.equals(TOKEN)) { if (!extra.get("x-msr-version").equals("2")) throw new Exception("gateway header"); return Protocol.object("code", 200, "data", Protocol.object("access_token", "TEST-ONLY-ACCESS")); }
             return Protocol.object("code", "200", "data", Protocol.object("extra", new JSONObject(), "nickName", "测试账号"));
         }

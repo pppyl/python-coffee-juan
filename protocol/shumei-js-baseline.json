@@ -1,0 +1,13 @@
+{
+  "source_url": "https://bff.starbucks.com.cn/fp.min.js",
+  "bytes": 370258,
+  "sha256": "2ce242e8ef85e98812b54bcf40298eecbdaa10990d636e22c75daa39e9cecaae",
+  "organization": "BbYdjRZ8pcNU9gt6YcBV",
+  "app_id": "default",
+  "api_host": "bff.starbucks.com.cn",
+  "api_path": "/deviceprofile/v4",
+  "use_short_box": true,
+  "observed_on": "2026-11-15",
+  "control_result": "A clean same-origin page loaded only this script, produced a new 89-character B-prefixed token, and received HTTP 200 from /deviceprofile/v4.",
+  "android_result": "The 1.0.5 test activity ran the pinned asset in an isolated Android WebView and returned {ready:true,length:89,prefix:B}."
+}

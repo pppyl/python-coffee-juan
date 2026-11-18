@@ -140,7 +140,7 @@ def canonical_query(path: str) -> str:
     return "&".join(name + "=" + ("null" if values[name] is None else values[name]) for name in names)
 
 
-def signature_message(path: str, body: bytes | str, *, version: str = "10.30.1",
+def signature_message(path: str, body: bytes | str, *, version: str = "10.32.0",
                       nonce: str, signature_version: int = 1) -> str:
     if signature_version != 1:
         raise ValueError("Only the verified Java fallback signature version 1 is available")
@@ -157,7 +157,7 @@ def _signing_key():
     return serialization.load_der_private_key(der, password=None)
 
 
-def sign_request(path: str, body: bytes | str, *, version: str = "10.30.1",
+def sign_request(path: str, body: bytes | str, *, version: str = "10.32.0",
                  nonce: str | None = None, signature_version: int = 1) -> str:
     """vk.l.J/I: RSA PKCS#1 v1.5 with SHA-256, source version 1 header."""
     if nonce is None:
@@ -175,7 +175,7 @@ def _form_bytes(values: Mapping) -> bytes:
     return "&".join(quote(str(k), safe="*-._") + "=" + quote(str(v), safe="*-._") for k, v in values.items()).encode("ascii")
 
 
-def build_request(method: str, path: str, payload: Any = None, version: str = "10.30.1", form: bool = False,
+def build_request(method: str, path: str, payload: Any = None, version: str = "10.32.0", form: bool = False,
                   *, encrypt: bool = True, response_encrypted: bool = True,
                   nonce: str | None = None, sign_before_encrypt: bool = True) -> tuple[bytes, dict[str, str]]:
     """Return exact wire bytes and protocol headers, without doing I/O.

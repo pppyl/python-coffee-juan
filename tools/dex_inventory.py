@@ -38,7 +38,12 @@ class Dex:
         self.classes = []
         for i in range(count):
             c = struct.unpack_from('<IIIIIIII', data, offset + i * 32)
-            self.classes.append({'class': self.types[c[0]], 'annotations_offset': c[5], 'data_offset': c[6]})
+            self.classes.append({
+                'class': self.types[c[0]],
+                'source_file': None if c[4] == 0xffffffff else self.strings[c[4]],
+                'annotations_offset': c[5],
+                'data_offset': c[6],
+            })
 
     def pair(self, pos): return struct.unpack_from('<II', self.data, pos)
     def u32(self, pos): return struct.unpack_from('<I', self.data, pos)[0]

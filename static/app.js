@@ -1,7 +1,8 @@
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const state = { accounts: [], results: new Map(), rendered: new Map(), ready: false, busy: false, loading: false, exporting: false, smsBusy: false, cooldown: 0, csrf: '', timer: null };
+  const state = { accounts: [], results: new Map(), rendered: new Map(), ready: false, busy: false, loading: false, exporting: false, smsBusy: false, smsCooldowns: new Map(), csrf: '', timer: null };
+  let smsPhone = '';
   const nativeCalls = new Map();
   window.receiveNativeResult = (id, serialized) => {
     const call = nativeCalls.get(id); if (!call) return;
@@ -54,8 +55,10 @@
   }
   function controls() {
     const locked = state.busy || state.smsBusy || state.loading || state.exporting;
-    $('send-sms').disabled = !state.ready || locked || state.cooldown > 0;
-    $('send-sms').textContent = state.smsBusy ? '正在发送…' : state.cooldown > 0 ? `${state.cooldown}s 后重试` : '获取验证码';
+    const deadline = state.smsCooldowns.get(enteredPhone()) ?? 0;
+    const remaining = Math.max(0, Math.ceil((deadline - performance.now()) / 1000));
+    $('send-sms').disabled = !state.ready || locked || remaining > 0;
+    $('send-sms').textContent = state.smsBusy ? '正在发送…' : remaining > 0 ? `${remaining}s 后重试` : '获取验证码';
     $('login-button').disabled = !state.ready || locked;
     $('login-button').firstElementChild.textContent = state.busy ? '正在登录…' : '添加账号';
     $('phone').disabled = locked;
@@ -100,36 +103,68 @@
     $('provider-message').textContent = text(result.provider?.message);
     applyAccounts(result.accounts);
   }
+  function enteredPhone() {
+    return $('phone').value.replace(/\s+/g, '');
+  }
   function phoneValue() {
-    const phone = $('phone').value.replace(/\s+/g, '');
+    const phone = enteredPhone();
     if (!/^1[3-9]\d{9}$/.test(phone)) { $('phone').focus(); throw new Error('请输入正确的 11 位中国大陆手机号码。'); }
     return phone;
   }
-  function cooldown(seconds) {
-    clearInterval(state.timer);
-    state.cooldown = Math.min(3600, Math.max(0, Number(seconds) || 60));
-    controls();
-    state.timer = setInterval(() => { state.cooldown = Math.max(0, state.cooldown - 1); controls(); if (!state.cooldown) clearInterval(state.timer); }, 1000);
+  function cooldown(phone, seconds) {
+    const duration = Math.min(3600, Number(seconds));
+    if (!(duration > 0)) return;
+    state.smsCooldowns.set(phone, performance.now() + 1000 * duration);
+    if (state.timer !== null) return;
+    state.timer = setInterval(() => {
+      const now = performance.now();
+      for (const [number, deadline] of state.smsCooldowns) {
+        if (deadline <= now) state.smsCooldowns.delete(number);
+      }
+      controls();
+      if (!state.smsCooldowns.size) {
+        clearInterval(state.timer);
+        state.timer = null;
+      }
+    }, 1000);
   }
   $('send-sms').addEventListener('click', async () => {
+    let phone;
     try {
-      const phone = phoneValue(); state.smsBusy = true; controls(); message('login-message', '');
+      phone = phoneValue(); state.smsBusy = true; controls(); message('login-message', '');
+      $('code').value = '';
       const result = await api('/api/auth/sms', { method: 'POST', body: JSON.stringify({ phone }) });
-      cooldown(result.retry_after ?? 60); message('login-message', result.message); $('code').focus();
-    } catch (error) { if (error.result?.retry_after) cooldown(error.result.retry_after); message('login-message', error.message, 'error'); }
+      smsPhone = phone;
+      cooldown(phone, result.retry_after ?? 60); message('login-message', result.message);
+      state.smsBusy = false; controls(); $('code').focus();
+    } catch (error) { if (phone && error.result?.retry_after) cooldown(phone, error.result.retry_after); message('login-message', error.message, 'error'); }
     finally { state.smsBusy = false; controls(); }
+  });
+  $('phone').addEventListener('input', () => {
+    if (enteredPhone() !== smsPhone) {
+      $('code').value = '';
+    }
+    controls();
   });
   $('login-form').addEventListener('submit', async event => {
     event.preventDefault();
     if (state.busy || !state.ready) return;
     try {
       const phone = phoneValue(), code = $('code').value.trim();
-      if (!/^\d{4}$/.test(code)) throw new Error('请输入短信中的 4 位数字验证码。');
+      if (smsPhone && phone !== smsPhone) throw new Error('请先在星巴克工具中为当前号码获取验证码。');
+      if (!/^[0-9]{4,8}$/.test(code)) throw new Error('请输入短信中的 4 至 8 位数字验证码。');
       state.busy = true; controls(); message('login-message', '');
       const result = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ phone, code }) });
+      smsPhone = '';
       $('code').value = ''; $('phone').value = '';
       applyAccounts(result.accounts); message('login-message', result.message);
-    } catch (error) { message('login-message', error.message, 'error'); }
+    } catch (error) {
+      if (error.result?.error === 'sms_required') {
+        smsPhone = '';
+        $('code').value = '';
+      }
+      message('login-message', error.message, 'error');
+    }
     finally { state.busy = false; controls(); }
   });
   async function removeAccount(id) {
@@ -140,7 +175,7 @@
   }
   $('logout-button').addEventListener('click', async () => {
     state.busy = true; controls();
-    try { const result = await api('/api/auth/logout', { method: 'POST', body: '{}' }); state.results.clear(); applyAccounts(result.accounts); message('login-message', result.message); message('coupon-message', ''); }
+    try { const result = await api('/api/auth/logout', { method: 'POST', body: '{}' }); smsPhone = ''; $('code').value = ''; state.results.clear(); applyAccounts(result.accounts); message('login-message', result.message); message('coupon-message', ''); }
     catch (error) { message('login-message', error.message, 'error'); }
     finally { state.busy = false; controls(); }
   });

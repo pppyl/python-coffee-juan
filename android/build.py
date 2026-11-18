@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 import zipfile
 
 from cryptography.hazmat.primitives import serialization
@@ -40,10 +41,15 @@ ASSETS = BUILD / "assets"
 ASSETS.mkdir(exist_ok=True)
 DEX = BUILD / "dex"
 DEX.mkdir(exist_ok=True)
-TOOLS = SDK / "build-tools/android-15"
+TOOLS = SDK / "build-tools/35.0.0"
+if not TOOLS.is_dir():
+    TOOLS = SDK / "build-tools/android-15"
+source_platform = SDK / "platforms/android-35/android.jar"
+if not source_platform.is_file():
+    source_platform = SDK / "platform/android-35/android.jar"
 PLATFORM = BUILD / "android.jar"
 if not PLATFORM.exists():
-    shutil.copyfile(SDK / "platform/android-35/android.jar", PLATFORM)
+    shutil.copyfile(source_platform, PLATFORM)
 shutil.copytree(ANDROID / "res", BUILD / "res", dirs_exist_ok=True)
 
 
@@ -65,15 +71,29 @@ for name in ("app.js", "app.css"):
         content += "\n.category-buttons button,.account-actions button,.coupon-actions button{min-height:34px}.hero{display:none}\n"
     (ASSETS / name).write_text(content, encoding="utf-8")
 
+shumei_baseline = json.loads((ROOT / "protocol/shumei-js-baseline.json").read_text(encoding="utf-8"))
+shumei_source = Path(os.environ.get("GOODGIFTS_SHUMEI_JS", private_dir() / "shumei/fp.min.js"))
+if not shumei_source.is_file():
+    raise SystemExit("缺少数美 JS 运行时，请通过 GOODGIFTS_SHUMEI_JS 指定已取证的 fp.min.js。")
+shumei_bytes = shumei_source.read_bytes()
+if len(shumei_bytes) != shumei_baseline["bytes"] or hashlib.sha256(shumei_bytes).hexdigest() != shumei_baseline["sha256"]:
+    raise SystemExit("数美 JS 运行时与 10.32.0 固定基线不一致。")
+(ASSETS / "fp.min.js").write_bytes(shumei_bytes)
+
 config = json.loads(client_config_path().read_text(encoding="utf-8"))
 key = serialization.load_der_private_key(base64.b64decode(config["signing_private_key_b64"].replace("\\n", "")), password=None)
 config["signing_private_key_b64"] = base64.b64encode(key.private_bytes(serialization.Encoding.DER, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())).decode()
 (ASSETS / "client.private.json").write_text(json.dumps(config), encoding="utf-8")
-(ASSETS / "third-party.txt").write_text("QR generator: Project Nayuki, MIT License.\nhttps://github.com/nayuki/QR-Code-generator\n\n" + (ANDROID / "vendor/io/nayuki/qrcodegen/QrCode.java").read_text(encoding="utf-8").split("package io.nayuki")[0], encoding="utf-8")
+(ASSETS / "third-party.txt").write_text("QR generator: Project Nayuki, MIT License.\nhttps://github.com/nayuki/QR-Code-generator\n\n" + (ANDROID / "vendor/io/nayuki/qrcodegen/QrCode.java").read_text(encoding="utf-8").split("package io.nayuki")[0] + "\nFingerprint runtime: private, version-pinned build input; not included in the source distribution.\n", encoding="utf-8")
 
 manifest = (ANDROID / "AndroidManifest.xml").read_text(encoding="utf-8")
+android_namespace = "{http://schemas.android.com/apk/res/android}"
+manifest_root = ET.fromstring(manifest)
+app_label = manifest_root.find("application").attrib[android_namespace + "label"]
+version_name = manifest_root.attrib[android_namespace + "versionName"]
 if TESTING:
     manifest = manifest.replace('<application ', '<application android:debuggable="true" ')
+    manifest = manifest.replace('</application>', '<activity android:name=".RiskTokenTestActivity" android:exported="true" />\n</application>')
     manifest = manifest.replace('</manifest>', '<instrumentation android:name=".SelfTestInstrumentation" android:targetPackage="cn.goodgifts.local" />\n</manifest>')
 (BUILD / "AndroidManifest.xml").write_text(manifest, encoding="utf-8")
 run([TOOLS / "aapt2.exe", "compile", "--dir", BUILD / "res", "-o", BUILD / "resources.zip"])
@@ -109,7 +129,7 @@ keystore = signing / "release.jks"
 if not keystore.exists():
     run([JDK / "bin/keytool.exe", "-genkeypair", "-keystore", keystore, "-storepass:file", password_file, "-keypass:file", password_file,
          "-alias", "goodgifts", "-keyalg", "RSA", "-keysize", "3072", "-validity", "10000", "-dname", "CN=GoodGifts Local"])
-output = ROOT / "dist" / ("goodgifts-selftest.apk" if TESTING else "好礼随行-1.0.0.apk")
+output = ROOT / "dist" / ("goodgifts-selftest.apk" if TESTING else f"{app_label}-{version_name}.apk")
 output.parent.mkdir(exist_ok=True)
 run([JDK / "bin/java.exe", "-jar", TOOLS / "lib/apksigner.jar", "sign", "--ks", keystore, "--ks-key-alias", "goodgifts",
      "--ks-pass", "file:" + str(password_file), "--out", output, BUILD / "aligned.apk"])

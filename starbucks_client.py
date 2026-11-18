@@ -1,4 +1,4 @@
-"""Starbucks China App HTTP client, reconstructed from version 10.30.1.
+"""Starbucks China App HTTP client, reconstructed from version 10.32.0.
 
 No ADB, native process, browser automation or connected phone is used here.
 Account credentials and upstream tokens remain in this instance's memory.
@@ -25,7 +25,13 @@ LOGIN_PATH = "/app-bff-api/login"
 TOKEN_PATH = "/app-bff-lgc/default/login/access_token"
 ACCOUNT_PATH = "/app-bff-api/auth/v2/user/detail"
 COUPONS_PATH = "/bff2/user/coupon/list"
-_PATHS = frozenset((SMS_PATH, LOGIN_PATH, TOKEN_PATH, ACCOUNT_PATH, COUPONS_PATH))
+_REQUEST_ACTIONS = {
+    SMS_PATH: "发送短信验证码",
+    LOGIN_PATH: "提交短信验证码",
+    TOKEN_PATH: "换取登录令牌",
+    ACCOUNT_PATH: "读取账号资料",
+    COUPONS_PATH: "读取好礼券",
+}
 
 
 class StarbucksAppHttpProvider:
@@ -63,7 +69,7 @@ class StarbucksAppHttpProvider:
     def _request(self, path, payload, *, form=False, authenticated=False, extra_headers=None):
         if self._configuration_error:
             raise ProviderError(self._configuration_error, 503, "protocol_configuration_missing")
-        if path not in _PATHS:
+        if path not in _REQUEST_ACTIONS:
             raise ValueError("Unsupported protocol path")
         if authenticated and not self.authenticated():
             raise ProviderError("请先完成登录。", 401, "login_required")
@@ -86,7 +92,12 @@ class StarbucksAppHttpProvider:
         if response.status_code == 429:
             raise ProviderError("星巴克限制了请求频率，请稍后再试。", 429, "starbucks_rate_limited")
         if not 200 <= response.status_code < 300 or response.status_code == 298:
-            raise ProviderError(f"星巴克网关返回 HTTP {response.status_code}，未完成操作。", 502, "starbucks_gateway_error")
+            raise ProviderError(
+                f"{_REQUEST_ACTIONS[path]}失败（HTTP {response.status_code}）。",
+                502,
+                "starbucks_gateway_error",
+                upstream_status=response.status_code,
+            )
         data = decode_response(response.content, protocol_headers)
         if not isinstance(data, Mapping):
             raise ProviderError("官方接口没有返回预期的业务数据。", 502, "starbucks_response_unrecognized")
@@ -105,8 +116,8 @@ class StarbucksAppHttpProvider:
     def login(self, phone, code):
         if phone != self.sent_phone or time.monotonic() - self.sms_at > 600:
             raise ProviderError("请先为当前手机号获取验证码。", 409, "sms_required")
-        if len(code) != 4 or not code.isascii() or not code.isdigit():
-            raise ProviderError("请输入短信中的 4 位验证码。", 400, "invalid_pin_length")
+        if not 4 <= len(code) <= 8 or not code.isascii() or not code.isdigit():
+            raise ProviderError("请输入短信中的 4 至 8 位数字验证码。", 400, "invalid_pin_length")
         self._clear_auth()
         payload = {"cellPhone": phone, "pin": code,
                    "device": build_device_entity(self.installation_id, context=self.identity_context)}

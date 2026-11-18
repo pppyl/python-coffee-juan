@@ -15,7 +15,7 @@ import uuid
 from errors import ProviderError
 
 
-APP_VERSION = "10.30.1"
+APP_VERSION = "10.32.0"
 API_VERSION = "2.0"
 CARD_MSR_VERSION = "4"
 MSR_VERSION = CARD_MSR_VERSION  # Compatibility alias; not a common header default.

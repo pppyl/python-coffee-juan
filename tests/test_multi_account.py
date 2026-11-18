@@ -58,12 +58,26 @@ class MultiAccountFixture(unittest.TestCase):
         return self.client.post(path, json=payload, headers={"X-CSRFToken": self.csrf})
 
     def add(self, phone, code="1234"):
-        self.now += 61
         self.assertEqual(self.post("/api/auth/sms", {"phone": phone}).status_code, 200)
         return self.post("/api/auth/login", {"phone": phone, "code": code})
 
 
 class MultiAccountTests(MultiAccountFixture):
+    def test_sms_cooldown_follows_number_when_switching(self):
+        first = {"phone": "13900000000"}
+        second = {"phone": "13800000000"}
+        self.assertEqual(self.post("/api/auth/sms", first).status_code, 200)
+        self.now += 10
+        self.assertEqual(self.post("/api/auth/sms", second).status_code, 200)
+        self.now += 49.5
+        limited = self.post("/api/auth/sms", first)
+        self.assertEqual((limited.status_code, limited.json["error"], limited.json["retry_after"]),
+                         (429, "sms_cooldown", 1))
+        self.assertEqual(self.providers[0].phone, second["phone"])
+        self.now += 0.5
+        self.assertEqual(self.post("/api/auth/sms", first).status_code, 200)
+        self.assertEqual(self.post("/api/auth/sms", second).json["retry_after"], 10)
+
     def test_successful_additions_do_not_consume_failed_login_attempt_limit(self):
         for suffix in range(6):
             self.assertEqual(self.add("1390000000" + str(suffix)).status_code, 200)

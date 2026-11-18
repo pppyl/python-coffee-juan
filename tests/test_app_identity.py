@@ -1,9 +1,10 @@
 from pathlib import Path
+import json
 import tempfile
 import unittest
 
 from app_identity import (
-    API_VERSION, CARD_MSR_VERSION, GATEWAY_GRANT_TYPE, GATEWAY_MSR_VERSION,
+    API_VERSION, APP_VERSION, CARD_MSR_VERSION, GATEWAY_GRANT_TYPE, GATEWAY_MSR_VERSION,
     MSR_VERSION, PIN_LOGIN_TYPE, SMS_TEMPLATE,
     build_bff2_base, build_device_entity, common_headers, make_installation_id,
     unwrap_bff, user_detail_body,
@@ -15,6 +16,19 @@ INSTALLATION = "0123456789abcdef0123456789abcdef"
 
 
 class AppIdentityTests(unittest.TestCase):
+    def test_protocol_version_matches_pinned_official_app_baseline(self):
+        baseline = json.loads((Path(__file__).parents[1] / "protocol" / "official-app-baseline.json").read_text(encoding="utf-8"))
+        self.assertEqual(baseline["package_name"], "com.starbucks.cn")
+        self.assertEqual(baseline["version_name"], APP_VERSION)
+        self.assertEqual(baseline["version_code"], 8838)
+
+    def test_shumei_script_baseline_is_pinned(self):
+        baseline = json.loads((Path(__file__).parents[1] / "protocol" / "shumei-js-baseline.json").read_text(encoding="utf-8"))
+        self.assertEqual(baseline["source_url"], "https://bff.starbucks.com.cn/fp.min.js")
+        self.assertEqual(baseline["bytes"], 370258)
+        self.assertEqual(baseline["sha256"], "2ce242e8ef85e98812b54bcf40298eecbdaa10990d636e22c75daa39e9cecaae")
+        self.assertEqual((baseline["api_host"], baseline["api_path"]), ("bff.starbucks.com.cn", "/deviceprofile/v4"))
+
     def test_installation_uuid_is_persistent_and_has_native_format(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "client" / "installation-id"
@@ -35,7 +49,7 @@ class AppIdentityTests(unittest.TestCase):
         value = build_device_entity(INSTALLATION)
         self.assertEqual(value, {
             "os_name": "Android", "language": "zh", "timezone": "Asia/Shanghai",
-            "id": INSTALLATION, "app_version": "10.30.1",
+            "id": INSTALLATION, "app_version": "10.32.0",
         })
         self.assertNotIn("manufacturer", value)
         self.assertNotIn("model", value)
@@ -47,7 +61,7 @@ class AppIdentityTests(unittest.TestCase):
                    "language": "zh-CN", "device_external_code": "TEST-ONLY-ACTUAL-CALLER-INPUT"}
         value = build_device_entity(INSTALLATION, context=context)
         self.assertEqual(value["language"], "zh")
-        self.assertEqual(value["user_agent"], "Android com.starbucks.cn.platform/10.30.1 (test-runtime; test-os)")
+        self.assertEqual(value["user_agent"], "Android com.starbucks.cn.platform/10.32.0 (test-runtime; test-os)")
         self.assertEqual(value["device_external_code"], context["device_external_code"])
         self.assertNotIn("deviceFpCode", value)
         self.assertNotIn("latitude", value)
@@ -59,7 +73,7 @@ class AppIdentityTests(unittest.TestCase):
 
     def test_headers_match_observed_interceptors_and_not_body_agent(self):
         headers = common_headers(INSTALLATION)
-        self.assertEqual(headers["User-Agent"], "com.starbucks.cn/10.30.1")
+        self.assertEqual(headers["User-Agent"], "com.starbucks.cn/10.32.0")
         self.assertEqual(headers["x-language-type"], "zh_CN")
         self.assertNotIn("x-msr-version", headers)
         self.assertEqual(headers["X-API-Version"], "2.0")

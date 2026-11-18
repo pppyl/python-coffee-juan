@@ -20,7 +20,7 @@ import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
 final class Protocol {
-    static final String VERSION = "10.30.1";
+    static final String VERSION = "10.32.0";
     private static final String ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._~";
     final JSONObject config;
     final PrivateKey signingKey;
@@ -103,7 +103,9 @@ final class Protocol {
     }
 
     String signature(String path, String body, String nonce) throws Exception {
-        String channel = config.getString("channel_prefix") + "103001";
+        StringBuilder versionChannel = new StringBuilder();
+        for (String part : VERSION.split("\\.")) versionChannel.append(part.length() == 1 ? "0" + part : part);
+        String channel = config.getString("channel_prefix") + versionChannel;
         String delimiter = config.getString("signature_delimiter");
         String message = "1" + delimiter + channel + delimiter + nonce + delimiter + path + delimiter + delimiter + body;
         Signature signature = Signature.getInstance("SHA256withRSA");

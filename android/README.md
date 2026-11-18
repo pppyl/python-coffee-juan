@@ -1,12 +1,15 @@
-# 好礼随行 Android
+# 星巴克工具 Android
 
 构建后安装包输出到 `../dist/`。支持 Android 10 及以上版本，安装包不包含在源码提交中。
 
 手机直接使用原生 HTTPS 客户端请求星巴克接口；界面、协议加密签名、登录、多账号会话、券码与图片处理全部在手机内运行。不连接电脑、不使用 Flask 或手机代理，也不需要安装官方客户端作为中转。
 
+登录风控凭据由隐藏 WebView 运行 10.32.0 固定哈希的 `fp.min.js` 动态生成；不会把某次 `Sm-Token` 写入源码或持久配置。运行时只允许访问 `https://bff.starbucks.com.cn/deviceprofile/v4`，并只接受服务端下发的 89 字符 `B` 型 boxId。脚本身份与配置记录在 `protocol/shumei-js-baseline.json`。
+
 ## 功能
 
-- 多个账号分别通过四位短信验证码登录；逐账号获取、退出，或一键获取全部账号。
+- 多个账号分别通过短信验证码登录；逐账号获取、退出，或一键获取全部账号。
+- 换手机号可以立即获取验证码，每个号码分别计算 60 秒重发间隔。
 - 批量获取中，一个账号失败不影响其他账号；券按账号分组，避免串号。
 - 复制、保存支持 8 元、10 元、15 元、20 元、30 元及全部分类，也支持单张券。
 - 复制内容包括券名、脱敏账号与二维码扫描原文。
@@ -24,11 +27,15 @@
 
 ## 构建
 
+2026-11-15，手动删除了本地构建输出目录 `dist/` 及其中的 APK。运行下面的构建命令会重新创建该目录并生成 APK。删除本地目录不会卸载手机上的应用。
+
 ```powershell
 python android/build.py
 ```
 
 构建需要 JDK 21、Android SDK Platform 35 和 Build Tools 35.0.0。通过 `GOODGIFTS_SDK`、`GOODGIFTS_JDK`（或 `JAVA_HOME`）指定路径，也可在项目外的私有目录中保存 `build-tools.json`，键为 `sdk`、`jdk`。源码不包含个人机器的工具路径。
+
+数美脚本属于私有构建输入，不随源码提交。默认从项目外的 `GoodGifts/private/starbucks-local/shumei/fp.min.js` 读取，也可用 `GOODGIFTS_SHUMEI_JS` 指定；构建会严格校验字节数和 SHA-256，避免静默混用其他版本。
 
 Windows 的 aapt2 不支持部分中文路径，因此构建中间文件放在用户临时目录下的 `goodgifts-android-*`，最终 APK 输出到本项目 `dist/`。客户端协议材料通过 `STARBUCKS_CLIENT_CONFIG` 或项目外的私有目录读取，构建时将 RSA 编码转换为 PKCS8 后打包；其中不应包含用户账号 token。
 

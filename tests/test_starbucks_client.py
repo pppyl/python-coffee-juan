@@ -89,10 +89,42 @@ class StarbucksClientTests(unittest.TestCase):
             self.provider.send_sms(PHONE)
         self.assertIsNone(self.provider.sent_phone)
 
-    def test_login_validates_phone_and_four_digits_before_network(self):
+    def test_http_469_identifies_the_failed_sms_step(self):
+        self.transport.request.return_value = response({}, status=469)
+        with self.assertRaises(ProviderError) as caught:
+            self.provider.send_sms(PHONE)
+        self.assertEqual(caught.exception.message, "发送短信验证码失败（HTTP 469）。")
+        self.assertEqual(caught.exception.details["upstream_status"], 469)
+        self.assertIsNone(self.provider.sent_phone)
+
+    def test_http_469_identifies_each_step_after_sms(self):
+        self.send()
+        successful = [
+            response({"code": 200, "data": {"token": "TEST-ONLY-CODE"}}),
+            response({"code": 200, "data": {"access_token": "TEST-ONLY-ACCESS"}}),
+        ]
+        for index, step in enumerate(("提交短信验证码", "换取登录令牌", "读取账号资料")):
+            with self.subTest(step=step):
+                self.transport.request.side_effect = successful[:index] + [response({}, status=469)]
+                with self.assertRaises(ProviderError) as caught:
+                    self.provider.login(PHONE, "1234")
+                self.assertEqual(caught.exception.message, f"{step}失败（HTTP 469）。")
+                self.assertFalse(self.provider.authenticated())
+
+    def test_longer_sms_code_reaches_the_existing_login_flow(self):
+        for code in ("012345", "01234567"):
+            with self.subTest(code=code):
+                self.transport.request.side_effect = None
+                self.prepare_login()
+                self.provider.login(PHONE, code)
+                self.assertEqual(json.loads(self.transport.request.call_args_list[0].kwargs["data"])["pin"], code)
+                self.assertTrue(self.provider.authenticated())
+                self.provider.logout()
+
+    def test_login_validates_phone_and_numeric_code_before_network(self):
         self.send()
         self.transport.request.reset_mock()
-        for phone, code in (("13800000000", "1234"), (PHONE, "123456"), (PHONE, "１２３４")):
+        for phone, code in (("13800000000", "1234"), (PHONE, "123"), (PHONE, "123456789"), (PHONE, "１２３４")):
             with self.subTest(phone=phone, code=code), self.assertRaises(ProviderError):
                 self.provider.login(phone, code)
         self.transport.request.assert_not_called()

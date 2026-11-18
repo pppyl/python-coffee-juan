@@ -17,26 +17,30 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 final class NativeBackend {
+    private static final int SMS_COOLDOWN_SECONDS = 60;
     final Context context;
     final Protocol protocol;
     final String installation;
     final AccountVault vault;
+    final RiskTokenProvider riskTokens;
     final LinkedHashMap<String, Account> accounts = new LinkedHashMap<>();
     StarbucksClient pending;
     String active;
-    long smsAt;
+    final Map<String, Long> smsCooldowns = new LinkedHashMap<>();
     final List<Long> attempts = new ArrayList<>();
 
-    NativeBackend(Context context) throws Exception {
-        this.context = context; protocol = new Protocol(context); vault = new AccountVault(context);
+    NativeBackend(Context context) throws Exception { this(context, null); }
+
+    NativeBackend(Context context, RiskTokenProvider riskTokens) throws Exception {
+        this.context = context; this.riskTokens = riskTokens; protocol = new Protocol(context); vault = new AccountVault(context);
         android.content.SharedPreferences prefs = context.getSharedPreferences("installation", Context.MODE_PRIVATE);
         String saved = prefs.getString("id", null);
         if (saved == null) { saved = UUID.randomUUID().toString().replace("-", ""); prefs.edit().putString("id", saved).commit(); }
-        installation = saved; pending = new StarbucksClient(protocol, installation);
+        installation = saved; pending = new StarbucksClient(protocol, installation, riskTokens);
         JSONArray stored = vault.load();
         for (int i = 0; i < stored.length(); i++) {
             JSONObject row = stored.getJSONObject(i);
-            StarbucksClient client = new StarbucksClient(protocol, installation);
+            StarbucksClient client = new StarbucksClient(protocol, installation, riskTokens);
             String token = row.optString("token", ""); client.token = token.isEmpty() ? null : token;
             client.name = row.optString("name", "我的星巴克账号"); client.confirmed = client.token != null;
             Account account = new Account(row.getString("id"), row.getString("phone"), client);
@@ -76,13 +80,21 @@ final class NativeBackend {
         if (path.equals("/api/auth/sms")) {
             String phone = body.optString("phone", ""); validatePhone(phone);
             for (Account account : accounts.values()) if (phone.equals(account.phone) && account.client.authenticated()) throw new ApiException("该账号已添加，可直接获取好礼券", "account_already_added");
-            long wait = 60 - (SystemClock.elapsedRealtime() - smsAt) / 1000;
-            if (smsAt != 0 && wait > 0) throw new ApiException("请在 " + wait + " 秒后重试", "sms_cooldown");
-            pending.sendSms(phone); smsAt = SystemClock.elapsedRealtime();
-            return ok("retry_after", 60, "message", "验证码已发送，请查看短信。");
+            long now = SystemClock.elapsedRealtime();
+            smsCooldowns.values().removeIf(deadline -> deadline <= now);
+            long remaining = smsCooldowns.getOrDefault(phone, now) - now;
+            if (remaining > 0) {
+                long wait = (remaining + 999) / 1000;
+                return Protocol.object("ok", false, "error", "sms_cooldown",
+                    "message", "请在 " + wait + " 秒后重试", "retry_after", wait);
+            }
+            pending.sendSms(phone);
+            smsCooldowns.put(phone, SystemClock.elapsedRealtime() + SMS_COOLDOWN_SECONDS * 1000L);
+            return ok("retry_after", SMS_COOLDOWN_SECONDS, "message", "验证码已发送，请查看短信。");
         }
         if (path.equals("/api/auth/login")) {
             String phone = body.optString("phone", ""), pin = body.optString("code", ""); validatePhone(phone);
+            StarbucksClient.validateSmsCode(pin);
             long now = SystemClock.elapsedRealtime(); attempts.removeIf(value -> now - value > 600000);
             if (attempts.size() >= 5) throw new ApiException("登录尝试过多，请稍后重试", "login_rate_limited");
             attempts.add(now); pending.login(phone, pin); attempts.clear();
@@ -90,7 +102,7 @@ final class NativeBackend {
             String id = previous == null ? UUID.randomUUID().toString() : previous.id;
             if (previous != null) previous.client.logout();
             Account account = new Account(id, phone, pending); accounts.put(id, account); active = id;
-            pending = new StarbucksClient(protocol, installation); persist();
+            pending = new StarbucksClient(protocol, installation, riskTokens); persist();
             return ok("accounts", summaries(), "account", account.summary(), "message", "账号已添加，可以继续添加其他账号。");
         }
         if (path.equals("/api/auth/logout")) {

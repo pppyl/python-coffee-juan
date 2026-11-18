@@ -4,6 +4,7 @@ import android.os.Build;
 import android.os.SystemClock;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
@@ -16,6 +17,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -25,14 +27,26 @@ class StarbucksClient {
     static final String COUPONS = "/bff2/user/coupon/list", HOST = "https://bff.starbucks.com.cn";
     final Protocol protocol;
     final String installation;
+    final RiskTokenProvider riskTokens;
     final CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ORIGINAL_SERVER);
     String token, name = "我的星巴克账号", sentPhone;
     boolean confirmed;
     long smsAt;
 
-    StarbucksClient(Protocol protocol, String installation) { this.protocol = protocol; this.installation = installation; }
+    StarbucksClient(Protocol protocol, String installation) { this(protocol, installation, null); }
+    StarbucksClient(Protocol protocol, String installation, RiskTokenProvider riskTokens) {
+        this.protocol = protocol; this.installation = installation; this.riskTokens = riskTokens;
+    }
     boolean authenticated() { return token != null && confirmed; }
-    void logout() { token = null; confirmed = false; cookies.getCookieStore().removeAll(); }
+    private void clearAuth() {
+        token = null;
+        confirmed = false;
+    }
+
+    void logout() {
+        clearAuth();
+        cookies.getCookieStore().removeAll();
+    }
 
     JSONObject device() throws Exception {
         return Protocol.object("os_name", "Android", "language", "zh", "timezone", "Asia/Shanghai",
@@ -51,6 +65,11 @@ class StarbucksClient {
         headers.put("User-Agent", "com.starbucks.cn/" + Protocol.VERSION);
         headers.put("x-phone-type", "ANDROID"); headers.put("x-app-version", Protocol.VERSION);
         headers.put("x-device-id", installation); headers.put("x-language-type", "zh_CN"); headers.put("lang", "zh_CN");
+        if (riskTokens != null) {
+            String smToken = riskTokens.get(TOKEN.equals(path) ? 18000 : 1500);
+            if (smToken != null && !smToken.isEmpty()) headers.put("Sm-Token", smToken);
+            else if (TOKEN.equals(path)) throw new ApiException("设备验证凭据尚未就绪，请稍后重试。", "risk_token_unavailable");
+        }
         if (token != null) headers.put("Authorization", "Bearer " + token);
         headers.putAll(frame.headers); if (extra != null) headers.putAll(extra);
         for (Map.Entry<String, String> entry : headers.entrySet()) connection.setRequestProperty(entry.getKey(), entry.getValue());
@@ -64,13 +83,105 @@ class StarbucksClient {
             int status = connection.getResponseCode(); cookies.put(uri, connection.getHeaderFields());
             if (status == 401 || status == 403) { logout(); throw new ApiException("登录已失效或官方要求额外验证，请重新登录。", "starbucks_auth_required"); }
             if (status == 429) throw new ApiException("官方限制了请求频率，请稍后再试。", "starbucks_rate_limited");
-            if (status < 200 || status >= 300 || status == 298) throw new ApiException("官方网关返回 HTTP " + status, "starbucks_gateway_error");
+            if (status < 200 || status >= 300 || status == 298) {
+                ApiException error = gatewayError(path, status);
+                if (status == 469) {
+                    android.util.Log.i("StarbucksTool", "gateway_http=469"
+                        + " step=" + requestAction(path)
+                        + " response_type=" + responseType(connection.getContentType())
+                        + " error_stream=" + (connection.getErrorStream() != null));
+                    if (TOKEN.equals(path)) {
+                        throw tokenGatewayError(connection.getErrorStream(), frame.encrypted,
+                            payload.optString("code", ""));
+                    }
+                }
+                throw error;
+            }
             try (InputStream input = connection.getInputStream()) {
                 return protocol.decode(new String(Protocol.read(input), StandardCharsets.UTF_8), frame.encrypted);
             }
         } catch (java.io.IOException error) {
             throw new ApiException("无法连接官方接口，请检查网络。短信请求不会自动重试。", "starbucks_unreachable");
         } finally { connection.disconnect(); }
+    }
+
+    private static String requestAction(String path) {
+        switch (path) {
+            case SMS: return "发送短信验证码";
+            case LOGIN: return "提交短信验证码";
+            case TOKEN: return "换取登录令牌";
+            case ACCOUNT: return "读取账号资料";
+            case COUPONS: return "读取好礼券";
+            default: return "请求星巴克接口";
+        }
+    }
+
+    static ApiException gatewayError(String path, int status) {
+        return new ApiException(requestAction(path) + "失败（HTTP " + status + "）。", "starbucks_gateway_error");
+    }
+
+    private ApiException tokenGatewayError(InputStream stream, boolean encrypted, String authorizationCode) {
+        ApiException fallback = gatewayError(TOKEN, 469);
+        if (stream == null) return fallback;
+        try (InputStream input = stream) {
+            final int limit = 8192;
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            byte[] buffer = new byte[1024];
+            while (bytes.size() <= limit) {
+                int count = input.read(buffer, 0, Math.min(buffer.length, limit + 1 - bytes.size()));
+                if (count == -1) {
+                    JSONObject response = protocol.decode(new String(bytes.toByteArray(), StandardCharsets.UTF_8), encrypted);
+                    return tokenGatewayError(response, authorizationCode);
+                }
+                bytes.write(buffer, 0, count);
+            }
+        } catch (Exception ignored) {
+            // A failed error-body read must preserve the original HTTP status.
+        }
+        return fallback;
+    }
+
+    static ApiException tokenGatewayError(JSONObject response, String authorizationCode) {
+        ApiException fallback = gatewayError(TOKEN, 469);
+        JSONObject nested = response.optJSONObject("error");
+        String code = firstErrorField(response, "code", "errorCode", "error_code");
+        if (code.isEmpty() && nested != null) code = firstErrorField(nested, "code", "errorCode", "error_code");
+        if (code.isEmpty()) code = firstErrorField(response, "error");
+        if (code.equals(authorizationCode) || !code.matches("[0-9]{1,7}|[A-Za-z][A-Za-z0-9_.-]{0,47}")) code = "";
+        String message = firstErrorField(response, "message", "error_description", "msg", "detail");
+        if (message.isEmpty() && nested != null) {
+            message = firstErrorField(nested, "message", "description", "detail");
+        }
+        if (!authorizationCode.isEmpty()) message = message.replace(authorizationCode, "[已隐去]");
+        message = message.replaceAll("(?i)\\bBearer\\s+[^\\s,;]+", "Bearer [已隐去]")
+            .replaceAll("(?i)\\b(access[_ -]?token|refresh[_ -]?token|authorization|cookie|token|otp|pin|password)\\s*[:=]\\s*\"?[^\\s,;\"]+", "$1=[已隐去]")
+            .replaceAll("https?://\\S+", "[链接已隐去]")
+            .replaceAll("[0-9]{4,}|[A-Za-z0-9_+/=.-]{20,}", "[已隐去]")
+            .replaceAll("[\\p{Cntrl}\\s]+", " ").trim();
+        if (message.length() > 180) message = message.substring(0, 180);
+        if (code.isEmpty() && message.isEmpty()) return fallback;
+        String detail = code.isEmpty() ? message : "错误码 " + code + (message.isEmpty() ? "" : "，" + message);
+        return new ApiException(fallback.getMessage() + "\n上游返回：" + detail, fallback.code);
+    }
+
+    private static String firstErrorField(JSONObject object, String... keys) {
+        for (String key : keys) {
+            Object value = object.opt(key);
+            if (value instanceof String || value instanceof Number) {
+                String text = value.toString().trim();
+                if (!text.isEmpty()) return text;
+            }
+        }
+        return "";
+    }
+
+    private static String responseType(String contentType) {
+        if (contentType == null || contentType.trim().isEmpty()) return "unspecified";
+        String mediaType = contentType.split(";", 2)[0].trim().toLowerCase(Locale.ROOT);
+        if (mediaType.equals("application/json") || mediaType.endsWith("+json")) return "json";
+        if (mediaType.equals("text/html")) return "html";
+        if (mediaType.startsWith("text/")) return "text";
+        return "other";
     }
 
     static Object unwrap(JSONObject response) throws Exception {
@@ -87,8 +198,9 @@ class StarbucksClient {
 
     synchronized void login(String phone, String pin) throws Exception {
         if (!phone.equals(sentPhone) || SystemClock.elapsedRealtime() - smsAt > 600000) throw new ApiException("请先为当前号码获取验证码", "sms_required");
-        if (!pin.matches("[0-9]{4}")) throw new ApiException("请输入四位验证码", "invalid_code");
-        logout();
+        validateSmsCode(pin);
+        // The SMS request and code submission are part of the same session.
+        clearAuth();
         Map<String, String> extra = new LinkedHashMap<>(); extra.put("loginType", "PIN_CODE");
         Object login = unwrap(request(LOGIN, Protocol.object("cellPhone", phone, "pin", pin, "device", device()), true, extra));
         String code = login instanceof JSONObject ? ((JSONObject) login).optString("token", "") : "";
@@ -106,6 +218,12 @@ class StarbucksClient {
             if (name.isEmpty()) name = "我的星巴克账号";
             confirmed = true; sentPhone = null;
         } catch (Exception error) { logout(); throw error; }
+    }
+
+    static void validateSmsCode(String code) throws ApiException {
+        if (!code.matches("[0-9]{4,8}")) {
+            throw new ApiException("请输入短信中的 4 至 8 位数字验证码。", "invalid_code");
+        }
     }
 
     synchronized List<JSONObject> coupons() throws Exception {
